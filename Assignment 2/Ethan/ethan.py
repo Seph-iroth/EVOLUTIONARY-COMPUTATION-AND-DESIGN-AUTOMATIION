@@ -1,0 +1,346 @@
+import csv
+import random
+import math
+import numpy as np
+from tqdm import tqdm
+import concurrent.futures
+# Define the Node class that will represent our function or terminal.
+import matplotlib.pyplot as plt
+
+import pandas as pd
+import os
+
+from graphviz import Digraph
+
+def load_data_from_csv(file_path):
+    """
+    Load data from a CSV file.
+    Assumes the first column is x values and the second column is y values.
+    """
+    data = pd.read_csv(file_path)
+    x_values = data.iloc[:, 0].values  # Assuming x values are in the first column
+    y_values = data.iloc[:, 1].values  # Assuming y values are in the second column
+    return x_values, y_values
+
+
+def plot_fitness_curves(random_search_fitness, genetic_programming_fitness):
+    plt.figure(figsize=(10, 6))
+    plt.plot(random_search_fitness, label="Random Search", color='blue')
+    plt.plot(genetic_programming_fitness, label="Genetic Programming", color='red')
+    plt.xlabel('Iteration/Generation')
+    plt.ylabel('Mean Squared Error (MSE)')
+    plt.legend()
+    plt.grid(True)
+    plt.title('Fitness Curves: Random Search vs. Genetic Programming')
+    plt.show()
+
+
+def plot_results(x_values, y_values, trees, labels):
+    plt.figure(figsize=(10, 6))
+    plt.plot(x_values, y_values, label="True Function", color='black', linewidth=2)
+
+    for tree, label in zip(trees, labels):
+        y_pred = [tree.eval(x) for x in x_values]
+        plt.plot(x_values, y_pred, label=label)
+
+    plt.xlabel('X Values')
+    plt.ylabel('Y Values')
+    plt.legend()
+    plt.grid(True)
+    plt.title('True Function vs. Predicted Functions')
+    plt.show()
+
+
+class Node:
+    def __init__(self, function=None, terminal=None):
+        self.function = function
+        self.terminal = terminal
+        self.left = None
+        self.right = None
+
+    def eval(self, x_val):
+        if self.function:
+            if self.function in ['+', '-', '*', '/']:
+                if self.function == '+': return self.left.eval(x_val) + self.right.eval(x_val)
+                if self.function == '-': return self.left.eval(x_val) - self.right.eval(x_val)
+                if self.function == '*': return self.left.eval(x_val) * self.right.eval(x_val)
+                if self.function == '/':
+                    denom = self.right.eval(x_val)
+                    if denom == 0: return 1
+                    return self.left.eval(x_val) / denom
+            elif self.function == 'sin':
+                return math.sin(self.left.eval(x_val))
+            elif self.function == 'cos':
+                return math.cos(self.left.eval(x_val))
+        else:
+            if self.terminal == 'x':
+                return x_val
+            return self.terminal
+
+    def __str__(self):
+        if self.function == '+':
+            return f"({str(self.left)} + {str(self.right)})"
+        elif self.function == '-':
+            return f"({str(self.left)} - {str(self.right)})"
+        elif self.function == '*':
+            return f"({str(self.left)} * {str(self.right)})"
+        elif self.function == '/':
+            return f"({str(self.left)} / {str(self.right)})"
+        elif self.function == 'sin':
+            return f"sin({str(self.left)})"
+        elif self.function == 'cos':
+            return f"cos({str(self.left)})"
+        else:
+            return str(self.terminal)
+
+
+# def draw_tree(tree, filename="best_tree"):
+#     dot = Digraph(comment='Expression Tree')
+#     draw_node(dot, tree)
+#     dot.render(filename, view=True)
+#
+#
+# def draw_node(dot, node, parent_name=None):
+#     if node is None:
+#         return
+#
+#     node_name = str(node)
+#     dot.node(node_name, label=str(node.terminal if node.terminal else node.function))
+#
+#     if parent_name:
+#         dot.edge(parent_name, node_name)
+#
+#     if node.left:
+#         draw_node(dot, node.left, node_name)
+#     if node.right:
+#         draw_node(dot, node.right, node_name)
+
+# Generate a random expression tree
+
+def plot_node(node, x, y, layer=1, parent_coords=None):
+    if node is None:
+        return
+
+    if parent_coords:
+        plt.plot([parent_coords[0], x], [parent_coords[1], y], 'k-')
+
+    plt.text(x, y, str(node), bbox=dict(facecolor='white', edgecolor='black'))
+
+    layer_height = -0.1
+    left_child_x = x - 0.5 / layer
+    right_child_x = x + 0.5 / layer
+
+    if node.left:
+        plot_node(node.left, left_child_x, y + layer_height, layer + 1, (x, y))
+    if node.right:
+        plot_node(node.right, right_child_x, y + layer_height, layer + 1, (x, y))
+
+def draw_tree(tree):
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.axis('off')
+    plot_node(tree, 0.5, 0)
+    plt.show()
+
+def generate_tree(depth):
+    if depth == 0:
+        if random.random() < 0.5:
+            return Node(terminal='x')
+        else:
+            return Node(terminal=random.uniform(-10, 10))
+    else:
+        n = Node()
+        func = random.choice(['+', '-', '*', '/', 'sin', 'cos'])
+        n.function = func
+        n.left = generate_tree(depth - 1)
+        if func not in ['sin', 'cos']:
+            n.right = generate_tree(depth - 1)
+        return n
+
+
+# Compute the mean squared error as fitness function
+def mse(tree, x_values, y_values):
+    errors = [(tree.eval(x) - y) ** 2 for x, y in zip(x_values, y_values)]
+    # print(errors)
+    return np.mean(errors)
+
+
+# Mutate a given tree by replacing a random node with a new subtree
+def mutate_tree(tree, depth=2):
+    all_nodes = get_all_nodes(tree)
+    node_to_mutate = random.choice(all_nodes)
+
+    # Replacing the node by generating a new subtree
+    if random.random() < 0.5:
+        node_to_mutate.left = generate_tree(depth)
+    else:
+        node_to_mutate.right = generate_tree(depth)
+
+    return tree
+
+
+# Tournament selection
+def tournament_select(population, x_values, y_values, tournament_size=5):
+    selected = random.sample(population, tournament_size)
+    selected.sort(key=lambda t: mse(t, x_values, y_values))
+    return selected[0]
+
+
+# Subtree crossover
+def crossover(parent1, parent2):
+    child1 = deepcopy(parent1)
+    child2 = deepcopy(parent2)
+
+    swap_node_1 = random.choice(get_all_nodes(child1))
+    swap_node_2 = random.choice(get_all_nodes(child2))
+
+    swap_node_1.function, swap_node_2.function = swap_node_2.function, swap_node_1.function
+    swap_node_1.terminal, swap_node_2.terminal = swap_node_2.terminal, swap_node_1.terminal
+    swap_node_1.left, swap_node_2.left = swap_node_2.left, swap_node_1.left
+    swap_node_1.right, swap_node_2.right = swap_node_2.right, swap_node_1.right
+
+    return child1, child2
+
+
+# def mutate(expression, prob=0.1):
+#     if random.random() < prob:
+#         return random_expression()
+#     return expression
+# Get all nodes from a tree
+def get_all_nodes(tree):
+    nodes = [tree]
+    if tree.left:
+        nodes.extend(get_all_nodes(tree.left))
+    if tree.right:
+        nodes.extend(get_all_nodes(tree.right))
+    return nodes
+
+
+from copy import deepcopy
+
+
+# Genetic programming main loop
+def genetic_programming(x_values, y_values, generations, pop_size=100, depth=4):
+    population = [generate_tree(depth) for _ in range(pop_size)]
+    fitness_values = []
+    for generation in tqdm(range(generations)):
+        new_population = []
+
+        for i in range(pop_size // 2):
+            parent1 = tournament_select(population, x_values, y_values)
+            parent2 = tournament_select(population, x_values, y_values)
+            child1, child2 = crossover(parent1, parent2)
+            new_population.extend([child1, child2])
+
+        population = new_population
+        best_fitness = mse(tournament_select(population, x_values, y_values), x_values, y_values)
+        fitness_values.append(best_fitness)
+
+        # print(new_population[1].eval(1).__str__())
+    best_tree = min(population, key=lambda t: mse(t, x_values, y_values))
+
+    return best_tree, fitness_values
+
+
+def random_search(x_values, y_values, iterations, depth=4):
+    best_tree = None
+    best_score = float('inf')
+    fitness_values = []
+    for _ in tqdm(range(iterations)):
+        candidate_tree = generate_tree(depth)
+        candidate_score = mse(candidate_tree, x_values, y_values)
+
+        if candidate_score < best_score:
+            best_tree = candidate_tree
+            best_score = candidate_score
+
+        fitness_values.append(best_score)
+    # with concurrent.futures.ProcessPoolExecutor(max_workers=2) as executor:
+    #     input_tourList = list(executor.map(swap_ramdom, input_tourList))
+    #     list_of_length = executor.map(total_length, input_tourList)
+    #     list_of_length = list(list_of_length)
+
+    return best_tree, fitness_values
+
+
+def hill_climbing(x_values, y_values, iterations, depth=4, mutation_depth=2):
+    current_tree = generate_tree(depth)
+    current_score = mse(current_tree, x_values, y_values)
+
+    for _ in tqdm(range(iterations)):
+        # Create a new mutated version of the current tree
+        new_tree = mutate_tree(deepcopy(current_tree), mutation_depth)
+        new_score = mse(new_tree, x_values, y_values)
+
+        # If the new tree is better, update our current tree and score
+        if new_score < current_score:
+            current_tree, current_score = new_tree, new_score
+
+    return current_tree, current_score
+
+
+def exportFile(number_list, list_list):
+    with open("output.csv", 'w', newline='') as csv_file:
+        csv_writer = csv.writer(csv_file)
+        for i in number_list:
+            csv_writer.writerow([i])
+
+
+def load_data_from_csv(file_path):
+    """
+    Load data from a CSV file.
+    Assumes the first column is x values and the second column is y values.
+    """
+    data = pd.read_csv(file_path)
+    x_values = data.iloc[:, 0].values  # Assuming x values are in the first column
+    y_values = data.iloc[:, 1].values  # Assuming y values are in the second column
+    return x_values, y_values
+
+
+def write_to_file(filename, content):
+    with open(filename, 'w') as file:
+        file.write(content)
+
+
+# Example usage
+# if __name__ == "__main__":
+#     # Generate random data
+#     x_values = np.linspace(-10, 10, 1000)
+#     y_values = 3 * x_values + 2 + np.sin(x_values) + np.random.normal(0, 0.5, size=1000)
+#     best_tree = random_search(x_values, y_values)
+#     print(best_tree)
+
+if __name__ == "__main__":
+    # Generate random data
+    # x_values = np.linspace(-10, 10, 1000)
+    # y_values = np.sin(x_values)*np.sin(x_values)
+
+    data = load_data_from_csv("Sliver.csv")
+    x_values = data[0]
+    y_values = data[1]
+
+    numIterations = 2
+    random_best_tree, random_search_fitness = random_search(x_values, y_values, numIterations)
+    genetic_best_tree, genetic_programming_fitness = genetic_programming(x_values, y_values, numIterations)
+    hill_climbing_best_tree, hill_climbing_fitness = hill_climbing(x_values, y_values, numIterations)
+
+    print(random_best_tree)
+    print(genetic_best_tree)
+    print(hill_climbing_best_tree)
+
+    # Generate string representations
+    random_tree_str = str(random_best_tree)
+    genetic_tree_str = str(genetic_best_tree)
+    hill_climbing_str = str(hill_climbing_best_tree)
+    # draw_tree(genetic_best_tree)
+
+    # Write to a text file
+    content = f"Random Search Best Tree: \n{random_tree_str}\n\nGenetic Programming Best Tree: \n{genetic_tree_str}\n\n Hill Climbing Best Tree: \n{hill_climbing_str}"
+    write_to_file("output_equations.txt", content)
+
+    print(os.getcwd())
+
+    # plot_results(x_values, y_values, [random_best_tree, genetic_best_tree], ["Random Search", "Genetic Programming"])
+    plot_fitness_curves(random_search_fitness, genetic_programming_fitness,hill_climbing)
+    plt.plot(data)
+
+    plt.show()

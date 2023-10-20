@@ -1,0 +1,8 @@
+Random Search Best Tree: 
+((sin((x * x)) + ((x * -1.1029735382350765) * sin(x))) * (cos(sin(-3.544294396550698)) - (sin(1.0216681565733676) + sin(x))))
+
+Genetic Programming Best Tree: 
+2.468733196000885
+
+ Hill Climbing Best Tree: 
+(sin(((x - x) / (5.5079240988119675 / x))) - (((-4.989923537457381 + x) / (x * x)) + ((x - x) - (x + -0.5011629625605032))))
